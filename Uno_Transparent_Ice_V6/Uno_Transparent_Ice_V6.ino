@@ -22,6 +22,7 @@ const float maxFreqVal = 80.0;
 unsigned long startTime;
 int volatileTemp = 0;
 bool cont = true;
+bool cont2 = true;
 int count = 0;
 int therm1Samp[NUMSAMPLES];
 int therm2Samp[NUMSAMPLES];
@@ -34,7 +35,7 @@ void setup()
 {
   pinMode(10, OUTPUT);
   digitalWrite(10, HIGH);
-  
+
   pinMode(HEATER, OUTPUT);
   pinMode(LED, OUTPUT);
   Serial.begin(9600);
@@ -73,22 +74,17 @@ void loop()
 
   //// Thermistor 1 (middle of cup) and 2 (bottom of cup)
 
-  // Filter out bad data. 
+  // Filter out bad data.
   // Sum N samples with delay
 
-  do {
-    for (i = 0; i < NUMSAMPLES; i++) {
-      therm1Samp[i] = analogRead(THERM_1);
-      therm2Samp[i] = analogRead(THERM_2);
-      therm3Samp[i] = analogRead(THERM_3);
-      delay(10);    
-    }
-    therm1Bool = tempWithinTol(therm1Samp);
-    therm2Bool = tempWithinTol(therm2Samp);
-    therm3Bool = tempWithinTol(therm3Samp);
-  } while (therm1Bool || therm2Bool || therm3Bool);
-  
-   
+
+  for (i = 0; i < NUMSAMPLES; i++) {
+    therm1Samp[i] = analogRead(THERM_1);
+    therm2Samp[i] = analogRead(THERM_2);
+    therm3Samp[i] = analogRead(THERM_3);
+    delay(10);
+  }
+
   therm1Avg = avgArray(therm1Samp);
   therm2Avg = avgArray(therm2Samp);
   therm3Avg = avgArray(therm3Samp);
@@ -97,7 +93,7 @@ void loop()
   therm1Avg = valToThermRes(therm1Avg);
   therm2Avg = valToThermRes(therm2Avg);
   therm3Avg = valToThermRes(therm3Avg);
-  
+
   // Convert average thermal resistance to temperature (F)
   middleTherm_1 = resToFahren(therm1Avg);
   bottomTherm_2 = resToFahren(therm2Avg);
@@ -116,19 +112,30 @@ void loop()
     startTime = millis();
     focusedProbeTemp = &bottomTherm_2;
     prevFocusedProbeTemp = &bottomTherm_2;
-    volatileTemp = 70;  // Beginning at approx. 28%
+    volatileTemp = 100;  // Beginning at approx. 28%
   }
 
   if (initialPreFreezeState) {
 
     // Code to focus on which probe gain data from based on ice level.
-
-    // Measuring in 30 minute intervals
-    if (((millis() - startTime) % 1800000) == 0) {
-      count++;
+    if (*prevFocusedProbeTemp < 30.5) {
+      if (focusedProbeTemp == &bottomTherm_2) {
+        if (cont) {
+          focusedProbeTemp = &middleTherm_1;
+          cont = false;
+          volatileTemp = 80;
+        }
+      } else if (focusedProbeTemp == &middleTherm_1) {
+        if (cont2) {
+          prevFocusedProbeTemp = &middleTherm_1;
+          focusedProbeTemp = &heatSinkTemp;
+          volatileTemp = 65;
+          cont = false;
+        }
+      }
     }
 
-    if ((*focusedProbeTemp >= 31.5) && (*focusedProbeTemp <= 32.5)) {
+    if ((*focusedProbeTemp >= 31.5) && (*focusedProbeTemp <= 32.5) && cont2) {
       if ((heatSinkTherm_3 >= middleTherm_1) && (middleTherm_1 > bottomTherm_2)) {
         // Do nothing. Probably use a go to statemnt or whatever...
         // Ideal spot to be in.
@@ -136,24 +143,31 @@ void loop()
       } else {
         tempStatus = "Stable";
       }
-    } else if (*focusedProbeTemp > 32.5) {
-      volatileTemp -= 3; // decreasing heat gen. power level by 1%
-      tempStatus = "DecPow";
     } else if (*focusedProbeTemp < 31.5) {
       volatileTemp += 3; // increasing heat gen. power level by 1%
       tempStatus = "IncPow";
     }
   }
 
-  if (volatileTemp > 100) {
-    volatileTemp = 100;
+  // Measuring in 3 minute intervals
+  if (((millis() - startTime) >= 180000) && !cont2) {
+    volatileTemp--;
+    startTime = millis();
   }
 
-  analogWrite(HEATER, 70);
+  if (volatileTemp > 255) {
+    volatileTemp = 255;
+  } else if (volatileTemp < 0) {
+    volatileTemp = 0;
+  }
+
+
+
+  analogWrite(HEATER, volatileTemp);
 
   //// SD Card datalogging
   // Create data string for heatSink, middleTherm_1, and bottomTherm_2
-  dataString += String(millis());
+  dataString += String((millis()/1000);
   dataString += "\t";
   dataString += String(count);
   dataString += "\t";
@@ -168,7 +182,7 @@ void loop()
   dataString += volatileTemp;
 
     // Open file and write to it.
-  File dataFile = SD.open("datalog.txt", FILE_WRITE);
+  File dataFile = SD.open("Papa_Cup_datalog.txt", FILE_WRITE);
 
   if (dataFile) {
     dataFile.println(dataString);
